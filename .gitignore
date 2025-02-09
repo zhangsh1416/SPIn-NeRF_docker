@@ -19,6 +19,9 @@ lib64/
 parts/
 sdist/
 var/
+CLIP/
+kornia/
+tiny-cuda-nn/
 wheels/
 share/python-wheels/
 *.egg-info/

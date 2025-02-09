@@ -544,7 +544,7 @@ def create_nerf_tcnn(args):
 
     if args.masked_NeRF or args.object_removal:
         ckpts = []
-    ckpts = []  # todo remove this line!
+    #ckpts = []  # todo remove this line!
 
     print('Found ckpts', ckpts)
     if len(ckpts) > 0 and not args.no_reload:

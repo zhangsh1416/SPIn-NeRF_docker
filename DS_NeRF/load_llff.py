@@ -134,7 +134,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
 
     def imread(f):
         if f.endswith('png'):
-            return imageio.imread(f, ignoregamma=True)
+            return imageio.imread(f)
         else:
             return imageio.imread(f)
 
@@ -159,8 +159,8 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
             masks.append(msk)
             mask_indices.append(i)
             # comment this if statement in case you need all of the inpainted rgbs  todo chang != 0 to != len(mskfiles) - 30
-            if (i != len(mskfiles) - 5) and (not prepare) and args.lpips:
-                masks[-1] = masks[-1] * (-1)
+            #if (i != len(mskfiles) - 5) and (not prepare) and args.lpips:
+                #masks[-1] = masks[-1] * (-1)
         except:
             masks.append(-np.ones((imgs.shape[0], imgs.shape[1])))
 
