@@ -513,7 +513,9 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
     far = np.ndarray.max(bds_raw) * 1. * sc
     print('near/far:', near, far)
 
-    data_list = []
+    # Create indexed data structure for training images only
+    data_list = [None] * len(colmap_to_train_idx)  # Initialize with None for training image count
+    
     for id_im in range(1, len(images) + 1):
         # Skip if this is not a training image
         if id_im not in colmap_to_train_idx:
@@ -539,13 +541,25 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
             depth_list.append(depth)
             coord_list.append(point2D / factor)
             weight_list.append(weight)
+        
+        # Store at training index position
         if len(depth_list) > 0:
-            # print(id_im, len(depth_list), np.min(depth_list), np.max(depth_list), np.mean(depth_list))
-            data_list.append(
-                {"depth": np.array(depth_list), "coord": np.array(coord_list), "weight": np.array(weight_list)})
+            # print(f"COLMAP image {id_im} -> training index {train_idx}: {len(depth_list)} points")
+            data_list[train_idx] = {
+                "depth": np.array(depth_list), 
+                "coord": np.array(coord_list), 
+                "weight": np.array(weight_list)
+            }
         else:
-            pass
-            # print(id_im, len(depth_list))
+            # Create empty data for images with no valid depth points
+            data_list[train_idx] = {
+                "depth": np.array([]), 
+                "coord": np.array([]).reshape(0, 2), 
+                "weight": np.array([])
+            }
+            # print(f"COLMAP image {id_im} -> training index {train_idx}: 0 points")
+    
+    print(f"Created depth data for {len([d for d in data_list if d is not None])} training images")
     # json.dump(data_list, open(data_file, "w"))
     np.save(data_file, data_list)
     return data_list
