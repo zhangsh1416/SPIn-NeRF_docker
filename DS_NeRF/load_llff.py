@@ -479,10 +479,33 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
 
     poses = get_poses(images)
     # factor=8 downsamples original imgs by 8x
-    _, bds_raw, _, _, _, _ = _load_data(
+    _, bds_raw, _, _, _, _, _, _ = _load_data(
         basedir, factor=factor, prepare=prepare)
     bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
-    # print(bds_raw.shape)
+    
+    # Get training files list (same logic as in _load_data)
+    if prepare:
+        imgdir = os.path.join(basedir, f'images_{factor}' if factor != 1 else 'images')
+    else:
+        imgdir = os.path.join(basedir, f'images_{factor}' if factor != 1 else 'images', 'lama_images')
+    
+    all_files = [f for f in sorted(os.listdir(imgdir)) if
+                 f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
+    train_files = [f for f in all_files if not f.startswith('test_')]
+    
+    # Create mapping from COLMAP image names to training indices
+    colmap_to_train_idx = {}
+    train_idx = 0
+    for id_im in range(1, len(images) + 1):
+        image_name = images[id_im].name
+        # Remove extension and check if it's a training image
+        base_name = os.path.splitext(image_name)[0]
+        if not base_name.startswith('test_'):
+            colmap_to_train_idx[id_im] = train_idx
+            train_idx += 1
+    
+    print(f"Processing {len(colmap_to_train_idx)} training images out of {len(images)} total COLMAP images")
+    
     # Rescale if bd_factor is provided
     sc = 1. if bd_factor is None else 1. / (bds_raw.min() * bd_factor)
 
@@ -492,6 +515,11 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
 
     data_list = []
     for id_im in range(1, len(images) + 1):
+        # Skip if this is not a training image
+        if id_im not in colmap_to_train_idx:
+            continue
+            
+        train_idx = colmap_to_train_idx[id_im]
         depth_list = []
         coord_list = []
         weight_list = []
@@ -503,7 +531,8 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
             point3D = points[id_3D].xyz
             depth = (poses[id_im - 1, :3, 2].T @
                      (point3D - poses[id_im - 1, :3, 3])) * sc
-            if depth < bds_raw[id_im - 1, 0] * sc or depth > bds_raw[id_im - 1, 1] * sc:
+            # Use training index for bounds access
+            if depth < bds_raw[train_idx, 0] * sc or depth > bds_raw[train_idx, 1] * sc:
                 continue
             err = points[id_3D].error
             weight = 2 * np.exp(-(err / Err_mean) ** 2)
