@@ -110,36 +110,38 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
     all_files = [f for f in sorted(os.listdir(imgdir)) if
                  f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
 
-    # Separate train and test files
+    # Separate train and test files for automatic detection
     train_files = [f for f in all_files if not f.startswith('test_')]
     test_files = [f for f in all_files if f.startswith('test_')]
     
     print(f'Found {len(train_files)} train images and {len(test_files)} test images')
-    print(f'Loading ONLY training images for Stage 1 (poses_bounds.npy matches training images)')
+    print(f'Loading ALL images to match original poses_bounds.npy structure')
     
-    # Use only training images and their corresponding poses
-    imgfiles = [os.path.join(imgdir, f) for f in train_files]
+    # Use ALL images to match original poses structure (train + test)
+    imgfiles = [os.path.join(imgdir, f) for f in all_files]
     
-    # Generate train/test indices for the training-only dataset
-    train_indices = list(range(len(train_files)))  # [0, 1, 2, ..., train_count-1]
-    test_indices = []  # No test images in training mode
+    # Generate train/test indices based on filename patterns
+    train_indices = []
+    test_indices = []
+    for i, f in enumerate(all_files):
+        if f.startswith('test_'):
+            test_indices.append(i)
+        else:
+            train_indices.append(i)
     
-    print(f'Training indices: [0-{len(train_files)-1}] ({len(train_files)} images)')
-    print(f'Test indices: [] (test images excluded for Stage 1)')
+    print(f'Training indices: {train_indices[:5]}...{train_indices[-3:]} ({len(train_indices)} images)')
+    print(f'Test indices: {test_indices[:5]}...{test_indices[-3:]} ({len(test_indices)} images)')
     
-    # Update mask and depth file loading to use only training files
-    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in train_files if
+    # Update mask and depth file loading to use all files
+    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in all_files if
                 'cutout' not in f and 'pseudo' not in f]
 
     try:
-        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in train_files if
+        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in all_files if
                       f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
     except:
         depthfiles = mskfiles
 
-    if poses.shape[-1] > len(imgfiles):
-        poses = poses[:, :, :len(imgfiles)]
-        bds = bds[:, :len(imgfiles)]  # Also trim bounds to match images
     if poses.shape[-1] != len(imgfiles):
         print('Mismatch between imgs {} and poses {} !!!!'.format(
             len(imgfiles), poses.shape[-1]))
@@ -435,9 +437,9 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     print(poses.shape, images.shape, bds.shape)
 
     # Use filename-based test indices instead of pose distance
-    i_test = test_indices if test_indices else [0]  # Use first image as fallback for Stage 1
-    print(f'HOLDOUT views are {i_test} (Stage 1: using training data only)')
-    print(f'Train views: {len(train_indices)} images, Test views: {len(test_indices)} images (excluded)')
+    i_test = test_indices if test_indices else [0]  # Use first image as fallback
+    print(f'HOLDOUT views are {i_test[:5]}{"..." if len(i_test) > 5 else ""} (automatic detection based on filenames)')
+    print(f'Train views: {len(train_indices)} images, Test views: {len(test_indices)} images')
 
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
@@ -483,29 +485,6 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
         basedir, factor=factor, prepare=prepare)
     bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
     
-    # Get training files list (same logic as in _load_data)
-    if prepare:
-        imgdir = os.path.join(basedir, f'images_{factor}' if factor != 1 else 'images')
-    else:
-        imgdir = os.path.join(basedir, f'images_{factor}' if factor != 1 else 'images', 'lama_images')
-    
-    all_files = [f for f in sorted(os.listdir(imgdir)) if
-                 f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
-    train_files = [f for f in all_files if not f.startswith('test_')]
-    
-    # Create mapping from COLMAP image names to training indices
-    colmap_to_train_idx = {}
-    train_idx = 0
-    for id_im in range(1, len(images) + 1):
-        image_name = images[id_im].name
-        # Remove extension and check if it's a training image
-        base_name = os.path.splitext(image_name)[0]
-        if not base_name.startswith('test_'):
-            colmap_to_train_idx[id_im] = train_idx
-            train_idx += 1
-    
-    print(f"Processing {len(colmap_to_train_idx)} training images out of {len(images)} total COLMAP images")
-    
     # Rescale if bd_factor is provided
     sc = 1. if bd_factor is None else 1. / (bds_raw.min() * bd_factor)
 
@@ -513,15 +492,8 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
     far = np.ndarray.max(bds_raw) * 1. * sc
     print('near/far:', near, far)
 
-    # Create indexed data structure for training images only
-    data_list = [None] * len(colmap_to_train_idx)  # Initialize with None for training image count
-    
+    data_list = []
     for id_im in range(1, len(images) + 1):
-        # Skip if this is not a training image
-        if id_im not in colmap_to_train_idx:
-            continue
-            
-        train_idx = colmap_to_train_idx[id_im]
         depth_list = []
         coord_list = []
         weight_list = []
@@ -533,33 +505,20 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75, prepare=False):
             point3D = points[id_3D].xyz
             depth = (poses[id_im - 1, :3, 2].T @
                      (point3D - poses[id_im - 1, :3, 3])) * sc
-            # Use training index for bounds access
-            if depth < bds_raw[train_idx, 0] * sc or depth > bds_raw[train_idx, 1] * sc:
+            if depth < bds_raw[id_im - 1, 0] * sc or depth > bds_raw[id_im - 1, 1] * sc:
                 continue
             err = points[id_3D].error
             weight = 2 * np.exp(-(err / Err_mean) ** 2)
             depth_list.append(depth)
             coord_list.append(point2D / factor)
             weight_list.append(weight)
-        
-        # Store at training index position
         if len(depth_list) > 0:
-            # print(f"COLMAP image {id_im} -> training index {train_idx}: {len(depth_list)} points")
-            data_list[train_idx] = {
-                "depth": np.array(depth_list), 
-                "coord": np.array(coord_list), 
-                "weight": np.array(weight_list)
-            }
+            # print(id_im, len(depth_list), np.min(depth_list), np.max(depth_list), np.mean(depth_list))
+            data_list.append(
+                {"depth": np.array(depth_list), "coord": np.array(coord_list), "weight": np.array(weight_list)})
         else:
-            # Create empty data for images with no valid depth points
-            data_list[train_idx] = {
-                "depth": np.array([]), 
-                "coord": np.array([]).reshape(0, 2), 
-                "weight": np.array([])
-            }
-            # print(f"COLMAP image {id_im} -> training index {train_idx}: 0 points")
-    
-    print(f"Created depth data for {len([d for d in data_list if d is not None])} training images")
+            pass
+            # print(id_im, len(depth_list))
     # json.dump(data_list, open(data_file, "w"))
     np.save(data_file, data_list)
     return data_list
