@@ -1281,6 +1281,7 @@ def train():
                     depth_gts[i]['coord'] = depth_gts[i]['coord'][indices]
                     depth_gts[i]['weight'] = depth_gts[i]['weight'][indices]
                     depth_gts[i]['depth'] = depth_gts[i]['depth'][indices]
+                import pdb; pdb.set_trace()
                 rays_depth = np.stack(get_rays_by_coord_np(H, W, focal, poses[i, :3, :4], depth_gts[i]['coord']),
                                       axis=0)  # 2 x N x 3
                 # print(rays_depth.shape)
