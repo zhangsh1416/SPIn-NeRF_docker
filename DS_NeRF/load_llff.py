@@ -106,41 +106,40 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
         print(imgdir, 'does not exist, returning')
         return
 
-    # Keep original COLMAP alphabetical order (DO NOT REORDER)
+    # Get all files and separate train/test
     all_files = [f for f in sorted(os.listdir(imgdir)) if
                  f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
 
-    # Compute train/test indices in the original order
-    train_indices = []
-    test_indices = []
-    for i, filename in enumerate(all_files):
-        if filename.startswith('test_'):
-            test_indices.append(i)
-        else:
-            train_indices.append(i)
-
-    train_count = len(train_indices)
-    test_count = len(test_indices)
+    # Separate train and test files
+    train_files = [f for f in all_files if not f.startswith('test_')]
+    test_files = [f for f in all_files if f.startswith('test_')]
     
-    print(f'Found {train_count} train images and {test_count} test images (keeping COLMAP order)')
-    print(f'Train indices: {train_indices[:5]}...{train_indices[-5:] if len(train_indices) > 5 else train_indices}')
-    print(f'Test indices: {test_indices[:5]}...{test_indices[-5:] if len(test_indices) > 5 else test_indices}')
+    print(f'Found {len(train_files)} train images and {len(test_files)} test images')
+    print(f'Loading ONLY training images for Stage 1 (poses_bounds.npy matches training images)')
     
-    # Keep original order for poses-images alignment
-    imgfiles = [os.path.join(imgdir, f) for f in all_files]
+    # Use only training images and their corresponding poses
+    imgfiles = [os.path.join(imgdir, f) for f in train_files]
     
-    # Update mask and depth file loading to use same original ordering
-    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in all_files if
+    # Generate train/test indices for the training-only dataset
+    train_indices = list(range(len(train_files)))  # [0, 1, 2, ..., train_count-1]
+    test_indices = []  # No test images in training mode
+    
+    print(f'Training indices: [0-{len(train_files)-1}] ({len(train_files)} images)')
+    print(f'Test indices: [] (test images excluded for Stage 1)')
+    
+    # Update mask and depth file loading to use only training files
+    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in train_files if
                 'cutout' not in f and 'pseudo' not in f]
 
     try:
-        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in all_files if
+        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in train_files if
                       f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
     except:
         depthfiles = mskfiles
 
     if poses.shape[-1] > len(imgfiles):
         poses = poses[:, :, :len(imgfiles)]
+        bds = bds[:, :len(imgfiles)]  # Also trim bounds to match images
     if poses.shape[-1] != len(imgfiles):
         print('Mismatch between imgs {} and poses {} !!!!'.format(
             len(imgfiles), poses.shape[-1]))
@@ -436,9 +435,9 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     print(poses.shape, images.shape, bds.shape)
 
     # Use filename-based test indices instead of pose distance
-    i_test = test_indices
-    print(f'HOLDOUT views are {i_test} (based on test_ prefix)')
-    print(f'Train views: {train_indices}, Test views: {test_indices}')
+    i_test = test_indices if test_indices else [0]  # Use first image as fallback for Stage 1
+    print(f'HOLDOUT views are {i_test} (Stage 1: using training data only)')
+    print(f'Train views: {len(train_indices)} images, Test views: {len(test_indices)} images (excluded)')
 
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
