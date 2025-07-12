@@ -106,30 +106,35 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
         print(imgdir, 'does not exist, returning')
         return
 
-    # Separate train and test files based on filename pattern
+    # Keep original COLMAP alphabetical order (DO NOT REORDER)
     all_files = [f for f in sorted(os.listdir(imgdir)) if
                  f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
 
-    # Split into train and test files
-    train_files = [f for f in all_files if not f.startswith('test_')]
-    test_files = [f for f in all_files if f.startswith('test_')]
+    # Compute train/test indices in the original order
+    train_indices = []
+    test_indices = []
+    for i, filename in enumerate(all_files):
+        if filename.startswith('test_'):
+            test_indices.append(i)
+        else:
+            train_indices.append(i)
 
-    # Combine in order: train files first, then test files
-    ordered_files = train_files + test_files
-    imgfiles = [os.path.join(imgdir, f) for f in ordered_files]
-
-    # Store the split indices for later use
-    train_count = len(train_files)
-    test_count = len(test_files)
+    train_count = len(train_indices)
+    test_count = len(test_indices)
     
-    print(f'Found {train_count} train images and {test_count} test images')
+    print(f'Found {train_count} train images and {test_count} test images (keeping COLMAP order)')
+    print(f'Train indices: {train_indices[:5]}...{train_indices[-5:] if len(train_indices) > 5 else train_indices}')
+    print(f'Test indices: {test_indices[:5]}...{test_indices[-5:] if len(test_indices) > 5 else test_indices}')
     
-    # Update mask and depth file loading to use same ordering
-    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in ordered_files if
+    # Keep original order for poses-images alignment
+    imgfiles = [os.path.join(imgdir, f) for f in all_files]
+    
+    # Update mask and depth file loading to use same original ordering
+    mskfiles = [os.path.join(mskdir, f.split('.')[0] + '.png') for f in all_files if
                 'cutout' not in f and 'pseudo' not in f]
 
     try:
-        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in ordered_files if
+        depthfiles = [os.path.join(depthdir, f.split('.')[0] + '.png') for f in all_files if
                       f.endswith('JPG') or f.endswith('jpg') or f.endswith('jpeg') or f.endswith('png')]
     except:
         depthfiles = mskfiles
@@ -146,7 +151,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
     poses[2, 4, :] = poses[2, 4, :] * 1. / factor
 
     if not load_imgs:
-        return poses, bds
+        return poses, bds, None, None, None, None, train_indices, test_indices
 
     def imread(f):
         if f.endswith('png'):
@@ -203,7 +208,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, pr
     # inpainted_depths = inpainted_depths / np.max(inpainted_depths)
 
     print('Loaded image data', imgs.shape, poses[:, -1, 0], masks.shape)
-    return poses, bds, imgs, masks, inpainted_depths, mask_indices, train_count, test_count
+    return poses, bds, imgs, masks, inpainted_depths, mask_indices, train_indices, test_indices
 
 
 def normalize(x):
@@ -330,7 +335,7 @@ def spherify_poses(poses, bds):
 
 def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False,
                    spherify_hack=True, prepare=False, refined=False, use_MVSeg=False, args=None):
-    poses, bds, imgs, masks, inpainted_depths, mask_indices, train_count, test_count = _load_data(basedir,
+    poses, bds, imgs, masks, inpainted_depths, mask_indices, train_indices, test_indices = _load_data(basedir,
                                                                          factor=factor,
                                                                          prepare=prepare,
                                                                          refined=refined,
@@ -431,9 +436,9 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     print(poses.shape, images.shape, bds.shape)
 
     # Use filename-based test indices instead of pose distance
-    i_test = list(range(train_count, train_count + test_count))
+    i_test = test_indices
     print(f'HOLDOUT views are {i_test} (based on test_ prefix)')
-    print(f'Train views: 0-{train_count-1}, Test views: {train_count}-{train_count+test_count-1}')
+    print(f'Train views: {train_indices}, Test views: {test_indices}')
 
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)

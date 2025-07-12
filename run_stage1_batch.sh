@@ -61,7 +61,6 @@ for dataset_path in "${datasets[@]}"; do
     required_items=(
         "${dataset_path}/images"
         "${dataset_path}/images_2" 
-        "${dataset_path}/label"
         "${dataset_path}/sparse"
         "${dataset_path}/poses_bounds.npy"
     )
@@ -81,41 +80,54 @@ for dataset_path in "${datasets[@]}"; do
         continue
     fi
     
-    # Move label folder into images_2/ if needed
-    echo "Organizing label folder..." | tee -a "${MAIN_LOG}"
+    # Check and organize label folder
+    echo "Checking label folder organization..." | tee -a "${MAIN_LOG}"
     
-    if [ -d "${dataset_path}/label" ] && [ ! -d "${dataset_path}/images_2/label" ]; then
+    if [ -d "${dataset_path}/images_2/label" ]; then
+        echo "Label folder already exists in images_2/ ✓" | tee -a "${MAIN_LOG}"
+    elif [ -d "${dataset_path}/label" ]; then
         echo "Moving label folder from dataset root to images_2/" | tee -a "${MAIN_LOG}"
         mv "${dataset_path}/label" "${dataset_path}/images_2/label"
         echo "Label folder moved successfully" | tee -a "${MAIN_LOG}"
-    elif [ -d "${dataset_path}/images_2/label" ]; then
-        echo "Label folder already exists in images_2/, skipping move" | tee -a "${MAIN_LOG}"
     else
-        echo "WARNING: No label folder found in dataset root" | tee -a "${MAIN_LOG}"
+        echo "ERROR: No label folder found in ${dataset_path}/ or ${dataset_path}/images_2/" | tee -a "${MAIN_LOG}"
+        failed_datasets+=("$dataset_name")
+        echo "" | tee -a "${MAIN_LOG}"
+        continue
     fi
     
-    # Convert JPG to PNG if needed
-    echo "Converting JPG images to PNG format..." | tee -a "${MAIN_LOG}"
+    # Check if conversion is needed (smart detection)
+    echo "Checking image format conversion..." | tee -a "${MAIN_LOG}"
     
-    # Convert images in images_2/ folder
-    if [ -d "${dataset_path}/images_2" ]; then
-        jpg_count=$(find "${dataset_path}/images_2" -maxdepth 1 -name "*.jpg" -o -name "*.JPG" | wc -l)
-        if [ $jpg_count -gt 0 ]; then
-            echo "Found ${jpg_count} JPG images in images_2/, converting to PNG..." | tee -a "${MAIN_LOG}"
-            python jpg2png.py "${dataset_path}/images_2" 2>&1 | tee -a "${dataset_log}"
-        else
-            echo "No JPG images found in images_2/, skipping conversion" | tee -a "${MAIN_LOG}"
-        fi
+    # Check images in images_2/ folder
+    jpg_count=$(find "${dataset_path}/images_2" -maxdepth 1 -name "*.jpg" -o -name "*.JPG" 2>/dev/null | wc -l)
+    png_count=$(find "${dataset_path}/images_2" -maxdepth 1 -name "*.png" -o -name "*.PNG" 2>/dev/null | wc -l)
+    
+    if [ $jpg_count -gt 0 ] && [ $png_count -eq 0 ]; then
+        echo "Found ${jpg_count} JPG images, converting to PNG..." | tee -a "${MAIN_LOG}"
+        python jpg2png.py "${dataset_path}/images_2" 2>&1 | tee -a "${dataset_log}"
+    elif [ $png_count -gt 0 ] && [ $jpg_count -eq 0 ]; then
+        echo "Images already in PNG format (${png_count} files) ✓" | tee -a "${MAIN_LOG}"
+    elif [ $jpg_count -gt 0 ] && [ $png_count -gt 0 ]; then
+        echo "WARNING: Found both JPG (${jpg_count}) and PNG (${png_count}) files, converting JPG..." | tee -a "${MAIN_LOG}"
+        python jpg2png.py "${dataset_path}/images_2" 2>&1 | tee -a "${dataset_log}"
+    else
+        echo "ERROR: No image files found in images_2/" | tee -a "${MAIN_LOG}"
+        failed_datasets+=("$dataset_name")
+        echo "" | tee -a "${MAIN_LOG}"
+        continue
     fi
     
-    # Convert images in images_2/label/ folder  
+    # Check label images format
     if [ -d "${dataset_path}/images_2/label" ]; then
-        label_jpg_count=$(find "${dataset_path}/images_2/label" -name "*.jpg" -o -name "*.JPG" | wc -l)
-        if [ $label_jpg_count -gt 0 ]; then
+        label_jpg_count=$(find "${dataset_path}/images_2/label" -name "*.jpg" -o -name "*.JPG" 2>/dev/null | wc -l)
+        label_png_count=$(find "${dataset_path}/images_2/label" -name "*.png" -o -name "*.PNG" 2>/dev/null | wc -l)
+        
+        if [ $label_jpg_count -gt 0 ] && [ $label_png_count -eq 0 ]; then
             echo "Found ${label_jpg_count} JPG label images, converting to PNG..." | tee -a "${MAIN_LOG}"
             python jpg2png.py "${dataset_path}/images_2/label" 2>&1 | tee -a "${dataset_log}"
-        else
-            echo "No JPG label images found, skipping label conversion" | tee -a "${MAIN_LOG}"
+        elif [ $label_png_count -gt 0 ]; then
+            echo "Label images already in PNG format (${label_png_count} files) ✓" | tee -a "${MAIN_LOG}"
         fi
     fi
     
@@ -133,10 +145,19 @@ for dataset_path in "${datasets[@]}"; do
         continue
     fi
     
-    # Prepare LaMa directories
-    echo "Preparing LaMa directories..." | tee -a "${MAIN_LOG}"
+    # Prepare LaMa directories for this dataset
+    echo "Preparing LaMa directories for ${dataset_name}..." | tee -a "${MAIN_LOG}"
+    
+    # Create dataset-specific directories under lama/
+    DATASET_LAMA_DIR="lama/datasets/${dataset_name}"
+    mkdir -p "${DATASET_LAMA_DIR}/LaMa_test_images"
+    mkdir -p "${DATASET_LAMA_DIR}/output/label"
+    
+    # Clear the main LaMa directories and link to dataset-specific ones
     rm -rf lama/LaMa_test_images/*
     rm -rf lama/output/label/*
+    
+    echo "Created dataset-specific LaMa directories: ${DATASET_LAMA_DIR}" | tee -a "${MAIN_LOG}"
     
     # Record start time for this dataset
     dataset_start_time=$(date +%s)
@@ -165,13 +186,28 @@ for dataset_path in "${datasets[@]}"; do
         echo "SUCCESS: ${dataset_name} completed in ${duration} seconds" | tee -a "${MAIN_LOG}"
         success_count=$((success_count + 1))
         
-        # Verify output
+        # Copy output to dataset-specific directory
+        echo "Backing up LaMa output for ${dataset_name}..." | tee -a "${MAIN_LOG}"
+        
         if [ -d "lama/LaMa_test_images" ] && [ "$(ls -A lama/LaMa_test_images)" ]; then
-            image_count=$(find lama/LaMa_test_images -name "*.png" | wc -l)
-            echo "Generated ${image_count} depth images for LaMa processing" | tee -a "${MAIN_LOG}"
+            # Copy depth images to dataset-specific directory
+            cp -r lama/LaMa_test_images/* "${DATASET_LAMA_DIR}/LaMa_test_images/"
+            image_count=$(find "${DATASET_LAMA_DIR}/LaMa_test_images" -name "*.png" | wc -l)
+            echo "Backed up ${image_count} depth images to ${DATASET_LAMA_DIR}/LaMa_test_images/" | tee -a "${MAIN_LOG}"
+            
+            # Also copy labels for reference
+            if [ -d "lama/LaMa_test_images/label" ]; then
+                cp -r lama/LaMa_test_images/label "${DATASET_LAMA_DIR}/LaMa_test_images/"
+                label_count=$(find "${DATASET_LAMA_DIR}/LaMa_test_images/label" -name "*.png" | wc -l)
+                echo "Backed up ${label_count} label images to ${DATASET_LAMA_DIR}/LaMa_test_images/label/" | tee -a "${MAIN_LOG}"
+            fi
         else
-            echo "WARNING: No depth images generated in LaMa_test_images" | tee -a "${MAIN_LOG}"
+            echo "WARNING: No depth images generated in LaMa_test_images for ${dataset_name}" | tee -a "${MAIN_LOG}"
         fi
+        
+        # Verify final backup
+        final_count=$(find "${DATASET_LAMA_DIR}/LaMa_test_images" -name "*.png" | wc -l)
+        echo "Final backup verification: ${final_count} images saved for ${dataset_name}" | tee -a "${MAIN_LOG}"
         
     else
         echo "ERROR: ${dataset_name} failed during training" | tee -a "${MAIN_LOG}"
@@ -198,6 +234,7 @@ fi
 
 echo "Main log: ${MAIN_LOG}" | tee -a "${MAIN_LOG}"
 echo "Individual logs: ${LOG_DIR}/" | tee -a "${MAIN_LOG}"
+echo "LaMa outputs organized in: lama/datasets/{dataset_name}/LaMa_test_images/" | tee -a "${MAIN_LOG}"
 echo "===============================" | tee -a "${MAIN_LOG}"
 
 # Exit with error code if any datasets failed
